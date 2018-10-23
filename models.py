@@ -2,38 +2,37 @@ from sghmc_dgp import DGP
 
 import numpy as np
 from kernels import SquaredExponential
-from likelihoods import Gaussian
+from likelihoods import Gaussian, MultiClass
 
+class ARGS:
+    num_inducing = 256
+    iterations = 10000
+    minibatch_size = 10000
+    window_size = 100
+    num_posterior_samples = 100
+    posterior_sample_spacing = 50
 
 class RegressionModel(object):
-    def __init__(self):
-        class ARGS:
-            num_inducing = 100
-            iterations = 10000
-            minibatch_size = 10000
-            window_size = 100
-            num_posterior_samples = 100
-            posterior_sample_spacing = 50
-        self.ARGS = ARGS
+    def __init__(self, kernels, options=ARGS):
+        self.ARGS = options
         self.model = None
+        self.kernels = kernels
 
     def fit(self, X, Y):
         lik = Gaussian(np.var(Y, 0))
         return self._fit(X, Y, lik)
 
-    def _fit(self, X, Y, lik, **kwargs):
+    def _fit(self, X, Y, lik, num_outputs=1, **kwargs):
         if len(Y.shape) == 1:
             Y = Y[:, None]
 
         kerns = []
         if not self.model:
-            for _ in range(2):
-                kerns.append(SquaredExponential(X.shape[1], ARD=True, lengthscales=float(X.shape[1])**0.5))
-
             mb_size = self.ARGS.minibatch_size if X.shape[0] > self.ARGS.minibatch_size else X.shape[0]
 
-            self.model = DGP(X, Y, 100, kerns, lik,
+            self.model = DGP(X, Y, self.ARGS.num_inducing, self.kernels, lik,
                              minibatch_size=mb_size,
+                             num_outputs=num_outputs,
                              window_size=self.ARGS.window_size,
                              **kwargs)
 
@@ -72,4 +71,10 @@ class RegressionModel(object):
     def sample(self, Xs, S):
         ms, vs = self._predict(Xs, S)
         return ms + vs**0.5 * np.random.randn(*ms.shape)
+
+class ClassificationModel(RegressionModel):
+    def fit(self, X, Y):
+        classes = np.unique(Y).size
+        likelihood = MultiClass(classes)
+        self._fit(X, Y, lik=likelihood, num_outputs=classes)
 

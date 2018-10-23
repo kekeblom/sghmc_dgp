@@ -49,7 +49,7 @@ class DGP(BaseModel):
 
         return Fs[1:], Fmeans, Fvars
 
-    def __init__(self, X, Y, n_inducing, kernels, likelihood, minibatch_size, window_size,
+    def __init__(self, X, Y, n_inducing, kernels, likelihood, minibatch_size, window_size, num_outputs,
                  adam_lr=0.01, epsilon=0.01, mdecay=0.05):
         self.n_inducing = n_inducing
         self.kernels = kernels
@@ -63,7 +63,7 @@ class DGP(BaseModel):
         self.layers = []
         X_running = X.copy()
         for l in range(n_layers):
-            outputs = self.kernels[l+1].input_dim if l+1 < n_layers else Y.shape[1]
+            outputs = self.kernels[l+1].input_dim if l+1 < n_layers else num_outputs
             self.layers.append(Layer(self.kernels[l], outputs, n_inducing, fixed_mean=(l+1 < n_layers), X=X_running))
             X_running = np.matmul(X_running, self.layers[-1].mean)
 
@@ -97,3 +97,4 @@ class DGP(BaseModel):
             ms.append(m)
             vs.append(v)
         return np.stack(ms, 0), np.stack(vs, 0)
+
