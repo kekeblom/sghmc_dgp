@@ -8,7 +8,7 @@ from scipy.cluster.vq import kmeans2
 
 class Layer(object):
     def __init__(self, kern, outputs, Z, mean=None):
-        self.inputs, self.outputs, self.kernel = kern.input_dim, outputs, kern
+        self.outputs, self.kernel = outputs, kern
         self.M = Z.shape[0]
         self.mean = mean
 

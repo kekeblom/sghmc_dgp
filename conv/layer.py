@@ -32,6 +32,16 @@ class PatchExtractor(object):
         NPL_patches = tf.reshape(NHWK_patches, [N, self.patch_count, self.patch_length])
         return tf.transpose(NPL_patches, [1, 0, 2])
 
+    def patches(self, NHWC_X):
+        """extract_patches
+
+        :param X: N x height x width x feature_maps
+        :returns N x patch_count x patch_length
+        """
+        N = tf.shape(NHWC_X)[0]
+        NHWK_patches = self._extract_image_patches(NHWC_X)
+        return tf.reshape(NHWK_patches, [N, self.patch_count, self.patch_length])
+
     def _patch_length(self):
         """The number of elements in a patch."""
         return self.feature_maps * np.prod(self.patch_shape)
