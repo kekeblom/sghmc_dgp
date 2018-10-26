@@ -106,3 +106,41 @@ def conditional(Xnew, X, kern, f, *, full_cov=False, q_sqrt=None, white=False):
     mean, var = base_conditional(Kmn, Kmm, Knn, f, full_cov=full_cov, q_sqrt=q_sqrt, white=white)
 
     return mean, var # N x R, N x R or R x N x N
+
+def multiple_output_conditional(Kmn, Kmm, Knn, u, full_cov=False, white=False):
+    num_func = tf.shape(u)[1]  # R
+
+    Lm = tf.cholesky(Kmm)
+
+    Lm_inv = tf.matrix_inverse(Lm)
+    def compute_A(MN_Kmn):
+        return tf.matmul(Lm_inv, MN_Kmn)
+    A = tf.map_fn(compute_A, Kmn)
+    # def solve_A(MN_Kmn):
+    #     return tf.matrix_triangular_solve(Lm, MN_Kmn, lower=True) # M x M @ M x N -> M x N
+    # A = tf.map_fn(solve_A, Kmn) # P x M x N
+
+    # compute the covariance due to the conditioning
+    if full_cov:
+        fvar = Knn - tf.tensordot(A, A, [[1], [1]]) # P x N x N
+        fvar = tf.tile(fvar[None, :, :, :], [num_func, 1, 1, 1])  # R x N x N
+    else:
+        fvar = Knn - tf.reduce_sum(tf.square(A), 1) # P x N
+        fvar = tf.tile(fvar[None, :, :], [num_func, 1, 1])  # R x P x N
+
+    # another backsubstitution in the unwhitened case
+    if not white:
+        Lmt_inv = tf.matrix_inverse(tf.transpose(Lm))
+        def compute_product(MN_A):
+            return tf.matmul(Lmt_inv, MN_A)
+        A = tf.map_fn(compute_product, A)
+        # def backsub(MN_A):
+        #     return tf.matrix_triangular_solve(tf.transpose(Lm), MN_A, lower=False)
+        # A = tf.map_fn(backsub, A) # P x M x N
+
+    # construct the conditional mean
+    fmean = tf.tensordot(A, u, [[1], [0]]) # P x N x R
+    fmean = tf.transpose(fmean, [1, 0, 2]) # N x P x R
+
+    return fmean, fvar # N x P x R, R x P x N or R x P x N x N
+

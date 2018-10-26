@@ -114,3 +114,4 @@ class BaseModel(object):
             feed_dict.update(np.random.choice(self.posterior_samples))
         mll = np.mean(self.session.run((self.log_likelihood), feed_dict=feed_dict), 0)
         print(' Training MLL of a sample: {}'.format(mll))
+

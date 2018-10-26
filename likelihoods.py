@@ -80,8 +80,8 @@ class MultiClass(object):
         y_hat = F.argmax(axis=1)
         correct = tf.equal(y_hat[:, None], Y)
         Y_shape = tf.shape(Y)
-        ones = tf.ones(Y_shape, dtype=F.dtype) - self.invlink.epsilon
-        zeros = tf.zeros(Y_shape, dtype=F.dtype) + self.invlink.epsilon_k1
+        ones = tf.ones(Y_shape, dtype=tf.float64) - self.invlink.epsilon
+        zeros = tf.zeros(Y_shape, dtype=tf.float64) + self.invlink.epsilon_k1
         p = tf.where(correct, ones, zeros)
         return tf.log(p)
 

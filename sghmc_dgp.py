@@ -7,26 +7,20 @@ from scipy.cluster.vq import kmeans2
 
 
 class Layer(object):
-    def __init__(self, kern, outputs, n_inducing, fixed_mean, X):
+    def __init__(self, kern, outputs, Z, mean=None):
         self.inputs, self.outputs, self.kernel = kern.input_dim, outputs, kern
-        self.M, self.fixed_mean = n_inducing, fixed_mean
+        self.M = Z.shape[0]
+        self.mean = mean
 
-        self.Z = tf.Variable(kmeans2(X, self.M, minit='points')[0], dtype=tf.float64, name='Z')
-        if self.inputs == outputs:
-            self.mean = np.eye(self.inputs)
-        elif self.inputs < self.outputs:
-            self.mean = np.concatenate([np.eye(self.inputs), np.zeros((self.inputs, self.outputs - self.inputs))], axis=1)
-        else:
-            _, _, V = np.linalg.svd(X, full_matrices=False)
-            self.mean = V[:self.outputs, :].T
-
+        self.Z = tf.Variable(Z, dtype=tf.float64, name='Z')
+        self.mean = mean
         self.U = tf.Variable(np.zeros((self.M, self.outputs)), dtype=tf.float64, trainable=False, name='U')
 
     def conditional(self, X):
         # Caching the covariance matrix from the sghmc steps gives a significant speedup. This is not being done here.
         mean, var = conditionals.conditional(X, self.Z, self.kernel, self.U, white=True)
 
-        if self.fixed_mean:
+        if self.mean is not None:
             mean += tf.matmul(X, tf.cast(self.mean, tf.float64))
         return mean, var
 
@@ -35,37 +29,14 @@ class Layer(object):
 
 
 class DGP(BaseModel):
-    def propagate(self, X):
-        Fs = [X, ]
-        Fmeans, Fvars = [], []
-
-        for layer in self.layers:
-            mean, var = layer.conditional(Fs[-1])
-            eps = tf.random_normal(tf.shape(mean), dtype=tf.float64)
-            F = mean + eps * tf.sqrt(var)
-            Fs.append(F)
-            Fmeans.append(mean)
-            Fvars.append(var)
-
-        return Fs[1:], Fmeans, Fvars
-
-    def __init__(self, X, Y, n_inducing, kernels, likelihood, minibatch_size, window_size, num_outputs,
+    def __init__(self, X, Y, layers, likelihood, minibatch_size, window_size,
                  adam_lr=0.01, epsilon=0.01, mdecay=0.05):
-        self.n_inducing = n_inducing
-        self.kernels = kernels
         self.likelihood = likelihood
         self.minibatch_size = minibatch_size
         self.window_size = window_size
 
-        n_layers = len(kernels)
+        self.layers = layers
         N = X.shape[0]
-
-        self.layers = []
-        X_running = X.copy()
-        for l in range(n_layers):
-            outputs = self.kernels[l+1].input_dim if l+1 < n_layers else num_outputs
-            self.layers.append(Layer(self.kernels[l], outputs, n_inducing, fixed_mean=(l+1 < n_layers), X=X_running))
-            X_running = np.matmul(X_running, self.layers[-1].mean)
 
         super().__init__(X, Y, [l.U for l in self.layers], minibatch_size, window_size)
         self.f, self.fmeans, self.fvars = self.propagate(self.X_placeholder)
@@ -86,6 +57,20 @@ class DGP(BaseModel):
         self.session = tf.Session(config=config)
         init_op = tf.global_variables_initializer()
         self.session.run(init_op)
+
+    def propagate(self, X):
+        Fs = [X, ]
+        Fmeans, Fvars = [], []
+
+        for layer in self.layers:
+            mean, var = layer.conditional(Fs[-1])
+            eps = tf.random_normal(tf.shape(mean), dtype=tf.float64)
+            F = mean + eps * tf.sqrt(var)
+            Fs.append(F)
+            Fmeans.append(mean)
+            Fvars.append(var)
+
+        return Fs[1:], Fmeans, Fvars
 
     def predict_y(self, X, S):
         assert S <= len(self.posterior_samples)
