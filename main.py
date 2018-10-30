@@ -16,22 +16,37 @@ import observations
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--feature_maps', default=10, type=int)
-parser.add_argument('-M', default=64, type=int)
-parser.add_argument('--batch-size', default=128, type=int)
+parser.add_argument('-M', default=128, type=int)
+parser.add_argument('--batch-size', default=512, type=int)
+parser.add_argument('--iterations', default=30000, type=int)
+parser.add_argument('--cifar', action='store_true')
+parser.add_argument('--layers', default=3, type=int)
 
 flags = parser.parse_args()
 
-(Xtrain, Ytrain), (Xtest, Ytest) = observations.mnist('/tmp/mnist')
+def load_data():
+    if flags.cifar:
+        (Xtrain, Ytrain), (Xtest, Ytest) = observations.cifar10('/tmp/cifar')
+        Xtrain = np.transpose(Xtrain, [0, 2, 3, 1])
+        Xtest = np.transpose(Xtest, [0, 2, 3, 1])
+        mean = Xtrain.mean((0, 1, 2))
+        std = Xtrain.std((0, 1, 2))
+        Xtrain = (Xtrain - mean) / std
+        Xtest = (Xtest - mean) / std
+    else:
+        (Xtrain, Ytrain), (Xtest, Ytest) = observations.mnist('/tmp/mnist')
+        mean = Xtrain.mean()
+        std = Xtrain.std()
+        Xtrain = (Xtrain - mean) / std
+        Xtest = (Xtest - mean) / std
+    return (Xtrain, Ytrain), (Xtest, Ytest)
 
-mean = Xtrain.mean()
-std = Xtrain.std()
-Xtrain = (Xtrain - mean) / std
-Xtest = (Xtest - mean) / std
+(Xtrain, Ytrain), (Xtest, Ytest) = load_data()
+
 
 def compute_z_inner(X, M, feature_maps_out):
-    X = X.reshape(-1, 28, 28, 1)
-    filter_matrix = np.zeros((6, 6, 1, feature_maps_out))
-    filter_matrix[3, 3, 0, 0] = 1.0
+    filter_matrix = np.zeros((5, 5, X.shape[3], feature_maps_out))
+    filter_matrix[2, 2, :, :] = 1.0
     convolution = tf.nn.conv2d(X, filter_matrix,
             [1, 2, 2, 1],
             "VALID")
@@ -39,31 +54,44 @@ def compute_z_inner(X, M, feature_maps_out):
     with tf.Session() as sess:
         filtered = sess.run(convolution)
 
-    return conv_utils.cluster_patches(filtered.reshape(-1, 12, 12, feature_maps_out), M, 5)
+    return conv_utils.cluster_patches(filtered, M, 5)
 
-patches = conv_utils.cluster_patches(Xtrain.reshape(-1, 28, 28, 1), flags.M, 6)
 
-base_kernel = kernels.SquaredExponential(input_dim=6*6, lengthscales=2.0)
+layers = []
+input_size = Xtrain.shape[1:]
 
-conv_layer1 = ConvLayer((28, 28, 1), patch_size=6,
-	stride=2, base_kernel=base_kernel, Z=patches, feature_maps_out=flags.feature_maps)
+Z_inner = compute_z_inner(Xtrain, flags.M, flags.feature_maps)
+patches = conv_utils.cluster_patches(Xtrain, flags.M, 5)
+for layer in range(0, flags.layers-1):
+    if layer == 0:
+        stride = 2
+        Z = patches
+    else:
+        stride = 1
+        Z = Z_inner
+
+    base_kernel = kernels.SquaredExponential(input_dim=5*5*input_size[2], lengthscales=2.0)
+
+    conv_layer = ConvLayer(input_size, patch_size=5, stride=stride, base_kernel=base_kernel, Z=Z, feature_maps_out=flags.feature_maps)
+    layers.append(conv_layer)
+
+    input_size = (conv_layer.patch_extractor.out_image_height, conv_layer.patch_extractor.out_image_width, flags.feature_maps)
 
 rbf = kernels.SquaredExponential(input_dim=5*5*flags.feature_maps, lengthscales=2.0)
-patch_extractor = PatchExtractor(input_size=(12, 12, 10), filter_size=5, feature_maps=10, stride=1)
+patch_extractor = PatchExtractor(input_size, filter_size=5, feature_maps=10, stride=1)
 conv_kernel = ConvKernel(rbf, patch_extractor)
 
-Z = compute_z_inner(Xtrain, flags.M, flags.feature_maps)
-last_layer = Layer(conv_kernel, 10, Z)
+layers.append(Layer(conv_kernel, 10, Z))
 
-model = DGP(Xtrain.reshape(Xtrain.shape[0], 784),
+model = DGP(Xtrain.reshape(Xtrain.shape[0], np.prod(Xtrain.shape[1:])),
         Ytrain.reshape(Ytrain.shape[0], 1),
-        layers=[conv_layer1, last_layer],
+        layers=layers,
         likelihood=MultiClass(10),
         minibatch_size=flags.batch_size,
-        window_size=100)
+        window_size=100,
+        adam_lr=0.01)
 
-TRAIN_ITERATIONS = 10000
-for _ in range(TRAIN_ITERATIONS):
+for _ in range(flags.iterations):
     model.sghmc_step()
     model.train_hypers()
     if _ % 100 == 1:
@@ -82,11 +110,9 @@ def measure_accuracy(model):
         X = Xtest[slicer]
         Y = Ytest[slicer]
         mean, var = model.predict_y(X, POSTERIOR_SAMPLES)
-        prediction = mean.mean(axis=0).argmax(axis=1).reshape(X.shape[0], 1)
+        prediction = mean.mean(axis=0).argmax(axis=1)
         correct += (prediction == Y).sum()
     return correct / Ytest.shape[0]
-
-
 
 accuracy = measure_accuracy(model)
 
