@@ -19,7 +19,7 @@ def cluster_patches(NHWC_X, M, patch_size):
     # Randomly sample images and patches.
     patches = np.zeros((M, patch_length), dtype=NHWC_X.dtype)
     patches_per_image = 1
-    samples_per_inducing_point = 100
+    samples_per_inducing_point = 1000
     for i in range(M * samples_per_inducing_point // patches_per_image):
         # Sample a random image, compute the patches and sample some random patches.
         image = _sample(NHWC_X, 1)[0]
@@ -27,7 +27,6 @@ def cluster_patches(NHWC_X, M, patch_size):
                 patch_size, patch_length)
         patches[i*patches_per_image:(i+1)*patches_per_image] = sampled_patches
 
-    k_means = cluster.KMeans(n_clusters=M,
-            init='random', n_jobs=-1)
+    k_means = cluster.KMeans(n_clusters=M, n_jobs=-1)
     k_means.fit(patches)
     return k_means.cluster_centers_

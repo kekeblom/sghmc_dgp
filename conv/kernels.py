@@ -23,7 +23,6 @@ class AdditivePatchKernel(object):
         return tf.reshape(ND_X, [ND[0]] + list(self.patch_extractor.input_size))
 
     def K(self, ND_X, X2=None):
-        import ipdb; ipdb.set_trace()
         NHWC_X = self._reshape_X(ND_X)
         PNL_patches = self.patch_extractor.patches_PNL(NHWC_X)
 

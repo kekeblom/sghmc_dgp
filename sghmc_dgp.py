@@ -1,3 +1,4 @@
+import os
 import tensorflow as tf
 import numpy as np
 
@@ -16,9 +17,23 @@ class Layer(object):
         self.mean = mean
         self.U = tf.Variable(np.zeros((self.M, self.outputs)), dtype=tf.float64, trainable=False, name='U')
 
+        self.Lz = tf.placeholder_with_default(self._compute_Lz(self.Z),
+                shape=[Z.shape[0], Z.shape[0]])
+
+    def _compute_Lz(self, Z):
+        M = tf.shape(Z)[0]
+        Kmm = self.kernel.Kzz(Z) + tf.eye(M, dtype=tf.float64) * 1e-3
+        return tf.cholesky(Kmm)
+
+    def cacheable_params(self):
+        return [self.Lz]
+
     def conditional(self, X):
-        # Caching the covariance matrix from the sghmc steps gives a significant speedup. This is not being done here.
-        mean, var = conditionals.conditional(X, self.Z, self.kernel, self.U, white=True)
+        Kmn = self.kernel.Kzx(self.Z, X)
+
+        Knn = self.kernel.Kdiag(X)
+
+        mean, var = conditionals.base_conditional(Kmn, self.Lz, Knn, self.U)
 
         if self.mean is not None:
             mean += tf.matmul(X, tf.cast(self.mean, tf.float64))
@@ -57,6 +72,13 @@ class DGP(BaseModel):
         self.session = tf.Session(config=config)
         init_op = tf.global_variables_initializer()
         self.session.run(init_op)
+
+        self._saver = tf.train.Saver(
+                var_list=tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES))
+
+    def save(self, save_dir):
+        os.makedirs(save_dir, exist_ok=True)
+        self._saver.save(self.session, save_dir)
 
     def propagate(self, X):
         Fs = [X, ]

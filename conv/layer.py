@@ -3,7 +3,7 @@ import tensorflow as tf
 from sghmc_dgp import Layer
 import conditionals
 
-jitter = 1e-5
+jitter = 1e-3
 
 class PatchExtractor(object):
     """Extracts patches including color channels from images."""
@@ -114,6 +114,16 @@ class ConvLayer(Layer):
 
         self.U = tf.Variable(np.zeros((self.num_inducing, feature_maps_out)), dtype=tf.float64, trainable=False, name='U')
 
+        self.Lz = tf.placeholder_with_default(self._compute_Lu(self.Z),
+                shape=[Z.shape[0], Z.shape[0]])
+
+    def _compute_Lu(self, Z):
+        MM_Kzz =  self.conv_kernel.Kzz(self.Z)
+        return tf.cholesky(MM_Kzz)
+
+    def cacheable_params(self):
+        return [self.Lz]
+
     def conditional(self, ND_X, full_cov=False):
         """Computes the conditional distribution. Returns a tensor of size N x D."""
         N = tf.shape(ND_X)[0]
@@ -123,7 +133,6 @@ class ConvLayer(Layer):
             self.feature_maps_in])
         PNL_patches = self.patch_extractor.patches_PNL(NHWC_X)
 
-        MM_Kzz = self.conv_kernel.Kzz(self.Z)
         PMN_Kzf = self.conv_kernel.Kzf(self.Z, PNL_patches)
 
         if full_cov:
@@ -131,7 +140,7 @@ class ConvLayer(Layer):
         else:
             Knn = self.conv_kernel.Kdiag(PNL_patches)
 
-        mean, var = conditionals.multiple_output_conditional(PMN_Kzf, MM_Kzz, Knn, self.U)
+        mean, var = conditionals.multiple_output_conditional(PMN_Kzf, self.Lz, Knn, self.U)
 
         if full_cov:
             # var: R x P x N x N

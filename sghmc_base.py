@@ -1,3 +1,4 @@
+from functools import reduce
 import numpy as np
 import tensorflow as tf
 
@@ -17,6 +18,7 @@ class BaseModel(object):
         self.posterior_samples = []
         self.sample_op = None
         self.burn_in_op = None
+        self.cached_params = None
 
     def generate_update_step(self, nll, epsilon, mdecay):
         self.epsilon = epsilon
@@ -80,6 +82,9 @@ class BaseModel(object):
             for j in range(spacing):
                 X_batch, Y_batch = self.get_minibatch()
                 feed_dict = {self.X_placeholder: X_batch, self.Y_placeholder: Y_batch}
+
+                feed_dict.update(self.cached_params)
+
                 self.session.run((self.sample_op), feed_dict=feed_dict)
 
             values = self.session.run((self.vars))
@@ -91,11 +96,16 @@ class BaseModel(object):
     def sghmc_step(self):
         X_batch, Y_batch = self.get_minibatch()
         feed_dict = {self.X_placeholder: X_batch, self.Y_placeholder: Y_batch}
+
+        if self.cached_params is not None:
+            feed_dict.update(self.cached_params)
+
         self.session.run(self.burn_in_op, feed_dict=feed_dict)
         values = self.session.run((self.vars))
         sample = {}
         for var, value in zip(self.vars, values):
             sample[var] = value
+
         self.window.append(sample)
         if len(self.window) > self.window_size:
             self.window = self.window[-self.window_size:]
@@ -105,13 +115,32 @@ class BaseModel(object):
         feed_dict = {self.X_placeholder: X_batch, self.Y_placeholder: Y_batch}
         i = np.random.randint(len(self.window))
         feed_dict.update(self.window[i])
-        self.session.run(self.hyper_train_op, feed_dict=feed_dict)
+
+        ops = [self.hyper_train_op]
+        cacheable_params = self._collect_cacheable_params()
+        ops += cacheable_params
+
+        results = self.session.run(ops, feed_dict=feed_dict)
+        self._cache_params(cacheable_params, results[1:])
 
     def print_sample_performance(self, posterior=False):
         X_batch, Y_batch = self.get_minibatch()
         feed_dict = {self.X_placeholder: X_batch, self.Y_placeholder: Y_batch}
         if posterior:
             feed_dict.update(np.random.choice(self.posterior_samples))
+
+        if self.cached_params is not None:
+            feed_dict.update(self.cached_params)
+
         mll = np.mean(self.session.run((self.log_likelihood), feed_dict=feed_dict), 0)
         print(' Training MLL of a sample: {}'.format(mll.item()))
+
+    def _collect_cacheable_params(self):
+        params = [layer.cacheable_params() for layer in self.layers]
+        return reduce(lambda a, b: a + b, params)
+
+    def _cache_params(self, cached_params, evaluated):
+        self.cached_params = {}
+        for param, value in zip(cached_params, evaluated):
+            self.cached_params[param] = value
 

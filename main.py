@@ -16,11 +16,13 @@ import observations
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--feature_maps', default=10, type=int)
-parser.add_argument('-M', default=128, type=int)
-parser.add_argument('--batch-size', default=512, type=int)
-parser.add_argument('--iterations', default=30000, type=int)
+parser.add_argument('-M', default=64, type=int)
+parser.add_argument('--batch-size', default=128, type=int)
+parser.add_argument('--iterations', default=35000, type=int)
 parser.add_argument('--cifar', action='store_true')
 parser.add_argument('--layers', default=3, type=int)
+parser.add_argument('--lr', default=1e-3, type=float)
+parser.add_argument('out', required=True, type=str)
 
 flags = parser.parse_args()
 
@@ -35,14 +37,15 @@ def load_data():
         Xtest = (Xtest - mean) / std
     else:
         (Xtrain, Ytrain), (Xtest, Ytest) = observations.mnist('/tmp/mnist')
-        mean = Xtrain.mean()
+        mean = Xtrain.mean(axis=0)
         std = Xtrain.std()
         Xtrain = (Xtrain - mean) / std
         Xtest = (Xtest - mean) / std
+        Xtrain = Xtrain.reshape(-1, 28, 28, 1)
+        Xtest = Xtest.reshape(-1, 28, 28, 1)
     return (Xtrain, Ytrain), (Xtest, Ytest)
 
 (Xtrain, Ytrain), (Xtest, Ytest) = load_data()
-
 
 def compute_z_inner(X, M, feature_maps_out):
     filter_matrix = np.zeros((5, 5, X.shape[3], feature_maps_out))
@@ -56,32 +59,33 @@ def compute_z_inner(X, M, feature_maps_out):
 
     return conv_utils.cluster_patches(filtered, M, 5)
 
-
 layers = []
 input_size = Xtrain.shape[1:]
 
 Z_inner = compute_z_inner(Xtrain, flags.M, flags.feature_maps)
-patches = conv_utils.cluster_patches(Xtrain, flags.M, 5)
-for layer in range(0, flags.layers-1):
+patches = conv_utils.cluster_patches(Xtrain, flags.M, 10)
+
+strides = (2, 1)
+for layer in range(0, flags.layers):
     if layer == 0:
-        stride = 2
         Z = patches
     else:
-        stride = 1
         Z = Z_inner
+    if layer != flags.layers-1:
+        stride = strides[layer]
 
-    base_kernel = kernels.SquaredExponential(input_dim=5*5*input_size[2], lengthscales=2.0)
+        base_kernel = kernels.SquaredExponential(input_dim=5*5*input_size[2], lengthscales=2.0)
 
-    conv_layer = ConvLayer(input_size, patch_size=5, stride=stride, base_kernel=base_kernel, Z=Z, feature_maps_out=flags.feature_maps)
-    layers.append(conv_layer)
+        layer = ConvLayer(input_size, patch_size=5, stride=stride, base_kernel=base_kernel, Z=Z, feature_maps_out=flags.feature_maps)
 
-    input_size = (conv_layer.patch_extractor.out_image_height, conv_layer.patch_extractor.out_image_width, flags.feature_maps)
+        input_size = (layer.patch_extractor.out_image_height, layer.patch_extractor.out_image_width, flags.feature_maps)
+    else:
+        rbf = kernels.SquaredExponential(input_dim=5*5*flags.feature_maps, lengthscales=2.0)
+        patch_extractor = PatchExtractor(input_size, filter_size=5, feature_maps=10, stride=1)
+        conv_kernel = ConvKernel(rbf, patch_extractor)
+        layer = Layer(conv_kernel, 10, Z)
 
-rbf = kernels.SquaredExponential(input_dim=5*5*flags.feature_maps, lengthscales=2.0)
-patch_extractor = PatchExtractor(input_size, filter_size=5, feature_maps=10, stride=1)
-conv_kernel = ConvKernel(rbf, patch_extractor)
-
-layers.append(Layer(conv_kernel, 10, Z))
+    layers.append(layer)
 
 model = DGP(Xtrain.reshape(Xtrain.shape[0], np.prod(Xtrain.shape[1:])),
         Ytrain.reshape(Ytrain.shape[0], 1),
@@ -89,32 +93,34 @@ model = DGP(Xtrain.reshape(Xtrain.shape[0], np.prod(Xtrain.shape[1:])),
         likelihood=MultiClass(10),
         minibatch_size=flags.batch_size,
         window_size=100,
-        adam_lr=0.01)
+        adam_lr=flags.lr)
 
-for _ in range(flags.iterations):
+for i in range(flags.iterations):
     model.sghmc_step()
     model.train_hypers()
-    if _ % 100 == 1:
-        print("Iteration {}".format(_))
+    print("Iteration", i, end='\r')
+    if i % 500 == 1:
+        print("Iteration {}".format(i))
         model.print_sample_performance()
 
 POSTERIOR_SAMPLES = 100
 model.collect_samples(POSTERIOR_SAMPLES, 100)
 
 def measure_accuracy(model):
-    batch_size = 128
+    batch_size = 32
     batches = Xtest.shape[0] // batch_size
     correct = 0
     for i in range(batches + 1):
         slicer = slice(i * batch_size, (i+1) * batch_size)
         X = Xtest[slicer]
         Y = Ytest[slicer]
-        mean, var = model.predict_y(X, POSTERIOR_SAMPLES)
+        mean, var = model.predict_y(X.reshape(X.shape[0], np.prod(X.shape[1:])), POSTERIOR_SAMPLES)
         prediction = mean.mean(axis=0).argmax(axis=1)
         correct += (prediction == Y).sum()
     return correct / Ytest.shape[0]
 
-accuracy = measure_accuracy(model)
+model.save(flags.out)
 
+accuracy = measure_accuracy(model)
 print("Model accuracy:", accuracy)
 

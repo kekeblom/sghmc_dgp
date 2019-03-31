@@ -3,7 +3,7 @@
 import tensorflow as tf
 
 
-def base_conditional(Kmn, Kmm, Knn, f, *, full_cov=False, q_sqrt=None, white=False):
+def base_conditional(Kmn, Lm, Knn, f, *, full_cov=False, q_sqrt=None, white=False):
     """
     Given a g1 and g2, and distribution p and q such that
       p(g2) = N(g2;0,Kmm)
@@ -24,7 +24,6 @@ def base_conditional(Kmn, Kmm, Knn, f, *, full_cov=False, q_sqrt=None, white=Fal
     """
     # compute kernel stuff
     num_func = tf.shape(f)[1]  # R
-    Lm = tf.cholesky(Kmm)
 
     # Compute the projection matrix A
     A = tf.matrix_triangular_solve(Lm, Kmn, lower=True)
@@ -64,53 +63,8 @@ def base_conditional(Kmn, Kmm, Knn, f, *, full_cov=False, q_sqrt=None, white=Fal
 
     return fmean, fvar # N x R, R x N x N or N x R
 
-
-def conditional(Xnew, X, kern, f, *, full_cov=False, q_sqrt=None, white=False):
-    """
-    Given f, representing the GP at the points X, produce the mean and
-    (co-)variance of the GP at the points Xnew.
-    Additionally, there may be Gaussian uncertainty about f as represented by
-    q_sqrt. In this case `f` represents the mean of the distribution and
-    q_sqrt the square-root of the covariance.
-    Additionally, the GP may have been centered (whitened) so that
-        p(v) = N(0, I)
-        f = L v
-    thus
-        p(f) = N(0, LL^T) = N(0, K).
-    In this case `f` represents the values taken by v.
-    The method can either return the diagonals of the covariance matrix for
-    each output (default) or the full covariance matrix (full_cov=True).
-    We assume R independent GPs, represented by the columns of f (and the
-    first dimension of q_sqrt).
-    :param Xnew: data matrix, size N x D. Evaluate the GP at these new points
-    :param X: data points, size M x D.
-    :param kern: GPflow kernel.
-    :param f: data matrix, M x R, representing the function values at X,
-        for K functions.
-    :param q_sqrt: matrix of standard-deviations or Cholesky matrices,
-        size M x R or R x M x M.
-    :param white: boolean of whether to use the whitened representation as
-        described above.
-    :return:
-        - mean:     N x R
-        - variance: N x R (full_cov = False), R x N x N (full_cov = True)
-    """
-
-    num_data = tf.shape(X)[0]  # M
-    Kmm = kern.Kzz(X) + tf.eye(num_data, dtype=tf.float64) * 1e-7
-    Kmn = kern.Kzx(X, Xnew)
-    if full_cov:
-        Knn = kern.K(Xnew)
-    else:
-        Knn = kern.Kdiag(Xnew)
-    mean, var = base_conditional(Kmn, Kmm, Knn, f, full_cov=full_cov, q_sqrt=q_sqrt, white=white)
-
-    return mean, var # N x R, N x R or R x N x N
-
-def multiple_output_conditional(Kmn, Kmm, Knn, u, full_cov=False, white=False):
+def multiple_output_conditional(Kmn, Lm, Knn, u, full_cov=False, white=False):
     num_func = tf.shape(u)[1]  # R
-
-    Lm = tf.cholesky(Kmm)
 
     def solve_A(MN_Kmn):
         return tf.matrix_triangular_solve(Lm, MN_Kmn, lower=True) # M x M @ M x N -> M x N
