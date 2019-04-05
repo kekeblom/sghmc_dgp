@@ -35,7 +35,7 @@ class AdditivePatchKernel(object):
             NL_patches1, NL_patches2, weight = tupled
             return weight * self.base_kernel.K(NL_patches1, NL_patches2)
 
-        PNN_K = tf.map_fn(compute_K, (PNL_patches, PNL_patches2, self.patch_weights), settings.float_type,
+        PNN_K = tf.map_fn(compute_K, (PNL_patches, PNL_patches2, self.patch_weights), float_type,
                 parallel_iterations=self.patch_count)
 
         return tf.reduce_mean(PNN_K, [0])
@@ -46,7 +46,7 @@ class AdditivePatchKernel(object):
         def compute_Kdiag(tupled):
             NL_patches, weight = tupled
             return weight * self.base_kernel.Kdiag(NL_patches)
-        PN_K = tf.map_fn(compute_Kdiag, (PNL_patches, self.patch_weights), settings.float_type,
+        PN_K = tf.map_fn(compute_Kdiag, (PNL_patches, self.patch_weights), float_type,
                 parallel_iterations=self.patch_count)
         return tf.reduce_mean(PN_K, [0])
 
@@ -58,7 +58,7 @@ class AdditivePatchKernel(object):
             NL_patches, weight = tupled
             return weight * self.base_kernel.K(ML_Z, NL_patches)
 
-        KMN_Kuf = tf.map_fn(compute_Kuf, (PNL_patches, self.patch_weights), settings.float_type,
+        KMN_Kuf = tf.map_fn(compute_Kuf, (PNL_patches, self.patch_weights), float_type,
                 parallel_iterations=self.patch_count)
 
         return tf.reduce_mean(KMN_Kuf, [0])

@@ -6,7 +6,7 @@ import tensorflow as tf
 from models import RegressionModel, ClassificationModel
 from sghmc_dgp import DGP, Layer
 from conv.layer import ConvLayer, PatchExtractor
-from conv.kernels import ConvKernel
+from conv.kernels import ConvKernel, AdditivePatchKernel
 import kernels
 from likelihoods import MultiClass
 from conv import utils as conv_utils
@@ -21,8 +21,9 @@ parser.add_argument('--batch-size', default=128, type=int)
 parser.add_argument('--iterations', default=35000, type=int)
 parser.add_argument('--cifar', action='store_true')
 parser.add_argument('--layers', default=3, type=int)
-parser.add_argument('--lr', default=1e-3, type=float)
-parser.add_argument('out', required=True, type=str)
+parser.add_argument('--lr', default=1e-4, type=float)
+parser.add_argument('--load', type=str)
+parser.add_argument('out', type=str)
 
 flags = parser.parse_args()
 
@@ -54,7 +55,9 @@ def compute_z_inner(X, M, feature_maps_out):
             [1, 2, 2, 1],
             "VALID")
 
-    with tf.Session() as sess:
+    config = tf.ConfigProto()
+    config.gpu_options.allow_growth = True
+    with tf.Session(config=config) as sess:
         filtered = sess.run(convolution)
 
     return conv_utils.cluster_patches(filtered, M, 5)
@@ -65,27 +68,30 @@ input_size = Xtrain.shape[1:]
 Z_inner = compute_z_inner(Xtrain, flags.M, flags.feature_maps)
 patches = conv_utils.cluster_patches(Xtrain, flags.M, 10)
 
-strides = (2, 1)
+strides = (2, 1, 1, 1)
+filters = (5, 5, 5, 5)
 for layer in range(0, flags.layers):
     if layer == 0:
         Z = patches
     else:
         Z = Z_inner
+    filter_size = filters[layer]
+    stride = strides[layer]
     if layer != flags.layers-1:
-        stride = strides[layer]
 
-        base_kernel = kernels.SquaredExponential(input_dim=5*5*input_size[2], lengthscales=2.0)
+        base_kernel = kernels.SquaredExponential(input_dim=filter_size*filter_size*input_size[2], lengthscales=2.0)
 
-        layer = ConvLayer(input_size, patch_size=5, stride=stride, base_kernel=base_kernel, Z=Z, feature_maps_out=flags.feature_maps)
+        layer = ConvLayer(input_size, patch_size=filter_size, stride=stride, base_kernel=base_kernel, Z=Z, feature_maps_out=flags.feature_maps)
 
         input_size = (layer.patch_extractor.out_image_height, layer.patch_extractor.out_image_width, flags.feature_maps)
     else:
-        rbf = kernels.SquaredExponential(input_dim=5*5*flags.feature_maps, lengthscales=2.0)
-        patch_extractor = PatchExtractor(input_size, filter_size=5, feature_maps=10, stride=1)
+        rbf = kernels.SquaredExponential(input_dim=filter_size*filter_size*flags.feature_maps, lengthscales=2.0)
+        patch_extractor = PatchExtractor(input_size, filter_size=filter_size, feature_maps=10, stride=stride)
         conv_kernel = ConvKernel(rbf, patch_extractor)
         layer = Layer(conv_kernel, 10, Z)
 
     layers.append(layer)
+
 
 model = DGP(Xtrain.reshape(Xtrain.shape[0], np.prod(Xtrain.shape[1:])),
         Ytrain.reshape(Ytrain.shape[0], 1),
@@ -95,6 +101,11 @@ model = DGP(Xtrain.reshape(Xtrain.shape[0], np.prod(Xtrain.shape[1:])),
         window_size=100,
         adam_lr=flags.lr)
 
+if flags.load is not None:
+    print("Loading parameters")
+    checkpoint = tf.train.latest_checkpoint(flags.load)
+    model._saver.restore(model.session, checkpoint)
+
 for i in range(flags.iterations):
     model.sghmc_step()
     model.train_hypers()
@@ -103,8 +114,11 @@ for i in range(flags.iterations):
         print("Iteration {}".format(i))
         model.print_sample_performance()
 
-POSTERIOR_SAMPLES = 100
-model.collect_samples(POSTERIOR_SAMPLES, 100)
+    if i % 10000 == 0:
+        model.save(flags.out)
+
+POSTERIOR_SAMPLES = 25
+model.collect_samples(POSTERIOR_SAMPLES, 200)
 
 def measure_accuracy(model):
     batch_size = 32

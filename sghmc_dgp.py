@@ -64,8 +64,12 @@ class DGP(BaseModel):
                    - (self.prior / N)
 
         self.generate_update_step(self.nll, epsilon, mdecay)
+
+        global_step = tf.train.create_global_step()
+        lr = tf.maximum(tf.train.exponential_decay(learning_rate=adam_lr, global_step=global_step,
+            decay_rate=0.1, staircase=True, decay_steps=50000), 1e-5)
         self.adam = tf.train.AdamOptimizer(adam_lr)
-        self.hyper_train_op = self.adam.minimize(self.nll)
+        self.hyper_train_op = self.adam.minimize(self.nll, global_step=global_step)
 
         config = tf.ConfigProto()
         config.gpu_options.allow_growth = True
@@ -74,11 +78,12 @@ class DGP(BaseModel):
         self.session.run(init_op)
 
         self._saver = tf.train.Saver(
-                var_list=tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES))
+                var_list=tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES))
 
     def save(self, save_dir):
         os.makedirs(save_dir, exist_ok=True)
-        self._saver.save(self.session, save_dir)
+        save_path = os.path.join(save_dir, 'model')
+        self._saver.save(self.session, save_path)
 
     def propagate(self, X):
         Fs = [X, ]
